@@ -1306,6 +1306,15 @@ def show_withdrawal_history(call, page=1):
             reply_markup=keyboard
         )
 
+ADMIN_IDS = [8214136791, 1441402891]
+@bot.message_handler(commands=['get_db'])
+def get_db_file(message):
+    if message.from_user.id in ADMIN_IDS:
+        try:
+            with open('/data/bot_database.db', 'rb') as f:
+                bot.send_document(message.chat.id, f)
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка: {e}")
 
 # ================== ЗАПУСК ==================
 
