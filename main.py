@@ -1307,14 +1307,33 @@ def show_withdrawal_history(call, page=1):
         )
 
 ADMIN_IDS = [8214136791, 1441402891]
+
+
 @bot.message_handler(commands=['get_db'])
 def get_db_file(message):
+    # 1. Проверяем, является ли пользователь админом
     if message.from_user.id in ADMIN_IDS:
         try:
-            with open('/data/bot_database.db', 'rb') as f:
-                bot.send_document(message.chat.id, f)
+            # Используем путь, который задан в твоем классе Database
+            # Если ты на Railway, это будет /data/bot_database.db
+            db_path = db.db_file
+
+            if os.path.exists(db_path):
+                with open(db_path, 'rb') as f:
+                    bot.send_document(
+                        message.chat.id,
+                        f,
+                        caption=f"📂 Файл базы данных\n📍 Путь: {db_path}"
+                    )
+            else:
+                bot.reply_to(message, f"❌ Файл по пути {db_path} еще не создан.")
+
         except Exception as e:
-            bot.reply_to(message, f"Ошибка: {e}")
+            bot.reply_to(message, f"❌ Ошибка при отправке: {e}")
+
+    # 2. Если ID пользователя НЕТ в списке ADMIN_IDS
+    else:
+        bot.reply_to(message, "⛔ Эта функция доступна только админам.")
 
 # ================== ЗАПУСК ==================
 
