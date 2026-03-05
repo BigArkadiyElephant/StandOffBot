@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
-    def __init__(self, db_file='bot_database.db'):
+    def __init__(self, db_file='/data/bot_database.db'):
         self.db_file = db_file
         self.local = threading.local()
         self._init_db()
