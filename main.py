@@ -20,6 +20,33 @@ bot.remove_webhook()
 # Инициализация базы данных
 db = Database()
 
+ADMIN_IDS = [8214136791, 1441402891]
+
+@bot.message_handler(commands=['get_db'])
+def get_db_file(message):
+    user_id = message.from_user.id
+    print(f"DEBUG: Команда /get_db от пользователя {user_id}")  # Это будет видно в логах Railway
+
+    # Проверка прав
+    if user_id in ADMIN_IDS:
+        try:
+            # Берем путь прямо из объекта базы данных
+            db_path = db.db_file
+
+            if os.path.exists(db_path):
+                with open(db_path, 'rb') as f:
+                    bot.send_document(message.chat.id, f, caption=f"✅ База найдена по пути: {db_path}")
+            else:
+                bot.reply_to(message, f"❓ Файл {db_path} физически не найден на сервере.")
+
+        except Exception as e:
+            bot.reply_to(message, f"⚠️ Произошла ошибка при чтении: {e}")
+
+    else:
+        # ЭТО БУДЕТ ПИСАТЬ ВСЕМ ОСТАЛЬНЫМ
+        bot.reply_to(message, "⛔ Эта функция доступна только админам.")
+
+
 # Хранение временных данных
 user_data = {}
 pending_orders = {}
@@ -1305,32 +1332,6 @@ def show_withdrawal_history(call, page=1):
             text,
             reply_markup=keyboard
         )
-
-ADMIN_IDS = [8214136791, 1441402891]
-
-@bot.message_handler(commands=['get_db'])
-def get_db_file(message):
-    user_id = message.from_user.id
-    print(f"DEBUG: Команда /get_db от пользователя {user_id}")  # Это будет видно в логах Railway
-
-    # Проверка прав
-    if user_id in ADMIN_IDS:
-        try:
-            # Берем путь прямо из объекта базы данных
-            db_path = db.db_file
-
-            if os.path.exists(db_path):
-                with open(db_path, 'rb') as f:
-                    bot.send_document(message.chat.id, f, caption=f"✅ База найдена по пути: {db_path}")
-            else:
-                bot.reply_to(message, f"❓ Файл {db_path} физически не найден на сервере.")
-
-        except Exception as e:
-            bot.reply_to(message, f"⚠️ Произошла ошибка при чтении: {e}")
-
-    else:
-        # ЭТО БУДЕТ ПИСАТЬ ВСЕМ ОСТАЛЬНЫМ
-        bot.reply_to(message, "⛔ Эта функция доступна только админам.")
 
 # ================== ЗАПУСК ==================
 
