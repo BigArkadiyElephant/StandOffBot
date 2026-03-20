@@ -555,7 +555,7 @@ def process_purchase_amount(message):
             f"К оплате: {rub_amount:.2f} ₽\n\n"
             f"💳 {CARD_NUMBER1} СБЕР\n"
             f"💳 {CARD_NUMBER2} Юмани\n"
-            f"💳 {CARD_NUMBER3} Wb банк\n\n"
+            f"💳 {CARD_NUMBER3} озон банк\n\n"
             f"После оплаты нажмите кнопку:",
             reply_markup=types.InlineKeyboardMarkup().add(
                 types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"paid_{order_number}")
