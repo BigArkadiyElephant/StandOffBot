@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class GoogleSheetsManager:
-    def __init__(self, purchases_id, withdrawals_id, profiles_id):
+    def __init__(self, sheet_id, profiles_sheet, purchases_sheet, withdrawals_sheet):
         """Инициализация подключения к Google Sheets"""
         start_time = time.time()
 
@@ -23,15 +23,13 @@ class GoogleSheetsManager:
             # Подключаемся
             gc = gspread.service_account(filename=credentials_path)
 
-            # Открываем таблицы
-            self.purchases_sheet = gc.open_by_key(purchases_id)
-            self.withdrawals_sheet = gc.open_by_key(withdrawals_id)
-            self.profiles_sheet = gc.open_by_key(profiles_id)
+            # Открываем ОДНУ таблицу
+            self.sheet = gc.open_by_key(sheet_id)
 
-            # Берем первый лист
-            self.purchases = self.purchases_sheet.sheet1
-            self.withdrawals = self.withdrawals_sheet.sheet1
-            self.profiles = self.profiles_sheet.sheet1
+            # Получаем или создаем листы
+            self.profiles = self._get_or_create_worksheet(profiles_sheet)
+            self.purchases = self._get_or_create_worksheet(purchases_sheet)
+            self.withdrawals = self._get_or_create_worksheet(withdrawals_sheet)
 
             # Инициализируем заголовки
             self._init_sheets()
@@ -41,30 +39,46 @@ class GoogleSheetsManager:
 
         except Exception as e:
             logger.error(f"❌ Ошибка подключения к Google Sheets: {e}")
+            self.profiles = None
             self.purchases = None
             self.withdrawals = None
-            self.profiles = None
+
+    def _get_or_create_worksheet(self, title):
+        """Получить или создать лист"""
+        try:
+            # Пробуем получить существующий лист
+            worksheet = self.sheet.worksheet(title)
+            logger.info(f"✅ Лист '{title}' найден")
+            return worksheet
+        except gspread.exceptions.WorksheetNotFound:
+            # Создаем новый лист
+            worksheet = self.sheet.add_worksheet(title, rows=1000, cols=20)
+            logger.info(f"✅ Создан новый лист '{title}'")
+            return worksheet
 
     def _init_sheets(self):
         """Инициализация заголовков таблиц"""
         try:
+            # Лист покупок
             if self.purchases and not self.purchases.get_all_values():
                 headers = ['Заказ N', 'Дата', 'User ID', 'Username', 'Сумма GOLD', 'Сумма RUB',
                            'Фото чека', 'Статус', 'Время оплаты', 'Проверен администратором']
                 self.purchases.append_row(headers)
-                logger.info("✅ Созданы заголовки в таблице покупок")
+                logger.info("✅ Созданы заголовки в листе покупок")
 
+            # Лист выводов
             if self.withdrawals and not self.withdrawals.get_all_values():
                 headers = ['Заказ M', 'Дата', 'User ID', 'Username', 'Сумма GOLD',
                            'Сумма к выводу (RUB)', 'Статус', 'Проверен администратором']
                 self.withdrawals.append_row(headers)
-                logger.info("✅ Созданы заголовки в таблице выводов")
+                logger.info("✅ Созданы заголовки в листе выводов")
 
+            # Лист профилей
             if self.profiles and not self.profiles.get_all_values():
                 headers = ['User ID', 'Username', 'First Name', 'Last Name', 'Дата регистрации',
                            'GOLD баланс', 'Сумма заказов (RUB)', 'Количество заказов', 'Статус']
                 self.profiles.append_row(headers)
-                logger.info("✅ Созданы заголовки в таблице профилей")
+                logger.info("✅ Созданы заголовки в листе профилей")
 
         except Exception as e:
             logger.error(f"Ошибка инициализации таблиц: {e}")
@@ -107,22 +121,23 @@ class GoogleSheetsManager:
             logger.error(f"Ошибка получения номера заказа: {e}")
             return 1
 
-    def add_purchase_order(self, user_id, username, gold_amount, rub_amount, order_number):
+    def add_purchase_order(self, user_id, username, gold_amount, rub_amount):
         """Добавление заявки на покупку"""
         try:
             if not self.purchases:
-                logger.warning("⚠️ Таблица покупок не доступна")
-                return False
+                logger.warning("⚠️ Лист покупок не доступен")
+                return None
 
+            order_number = self.get_next_order_number('purchase')
             date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             row = [str(order_number), date, str(user_id), username or '-', str(gold_amount),
                    f"{rub_amount:.2f}", '', 'Ожидает оплаты', '', 'Нет']
             self.purchases.append_row(row)
             logger.info(f"✅ Заявка на покупку {order_number} добавлена")
-            return True
+            return order_number
         except Exception as e:
             logger.error(f"Ошибка добавления заявки на покупку: {e}")
-            return False
+            return None
 
     def update_purchase_receipt(self, order_number, file_id):
         """Обновление фото чека в заявке"""
@@ -142,24 +157,109 @@ class GoogleSheetsManager:
             logger.error(f"Ошибка обновления чека: {e}")
             return False
 
+    def update_purchase_status(self, order_number, status, admin_approved='Да'):
+        """Обновление статуса покупки"""
+        try:
+            if not self.purchases:
+                return False
+
+            cell = self.purchases.find(str(order_number))
+            if cell:
+                self.purchases.update_cell(cell.row, 8, status)
+                self.purchases.update_cell(cell.row, 10, admin_approved)
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка обновления статуса покупки: {e}")
+            return False
+
+    def get_purchase_order(self, order_number):
+        """Получение данных заказа"""
+        try:
+            if not self.purchases:
+                return None
+            records = self.purchases.get_all_values()
+            for i, row in enumerate(records):
+                if i == 0:
+                    continue
+                if len(row) > 0 and row[0] == str(order_number):
+                    return {
+                        'order_number': row[0],
+                        'date': row[1],
+                        'user_id': row[2],
+                        'username': row[3],
+                        'gold_amount': float(row[4]) if row[4] else 0,
+                        'rub_amount': float(row[5]) if row[5] else 0,
+                        'receipt_photo': row[6] if len(row) > 6 else '',
+                        'status': row[7] if len(row) > 7 else '',
+                        'payment_time': row[8] if len(row) > 8 else '',
+                        'admin_approved': row[9] if len(row) > 9 else 'Нет'
+                    }
+            return None
+        except Exception as e:
+            logger.error(f"Ошибка получения заказа: {e}")
+            return None
+
     # ========== МЕТОДЫ ДЛЯ ВЫВОДОВ ==========
 
-    def add_withdrawal_order(self, user_id, username, gold_amount, rub_amount, order_number):
+    def add_withdrawal_order(self, user_id, username, gold_amount, rub_amount):
         """Добавление заявки на вывод"""
         try:
             if not self.withdrawals:
-                logger.warning("⚠️ Таблица выводов не доступна")
-                return False
+                logger.warning("⚠️ Лист выводов не доступен")
+                return None
 
+            order_number = self.get_next_order_number('withdrawal')
             date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             row = [str(order_number), date, str(user_id), username or '-', str(gold_amount),
                    f"{rub_amount:.2f}", 'Ожидает проверки', 'Нет']
             self.withdrawals.append_row(row)
             logger.info(f"✅ Заявка на вывод {order_number} добавлена")
-            return True
+            return order_number
         except Exception as e:
             logger.error(f"Ошибка добавления заявки на вывод: {e}")
+            return None
+
+    def update_withdrawal_status(self, order_number, status, admin_approved='Да'):
+        """Обновление статуса вывода"""
+        try:
+            if not self.withdrawals:
+                return False
+
+            cell = self.withdrawals.find(str(order_number))
+            if cell:
+                self.withdrawals.update_cell(cell.row, 7, status)
+                self.withdrawals.update_cell(cell.row, 8, admin_approved)
+                return True
             return False
+        except Exception as e:
+            logger.error(f"Ошибка обновления статуса вывода: {e}")
+            return False
+
+    def get_withdrawal_order(self, order_number):
+        """Получение данных вывода"""
+        try:
+            if not self.withdrawals:
+                return None
+            records = self.withdrawals.get_all_values()
+            for i, row in enumerate(records):
+                if i == 0:
+                    continue
+                if len(row) > 0 and row[0] == str(order_number):
+                    return {
+                        'order_number': row[0],
+                        'date': row[1],
+                        'user_id': row[2],
+                        'username': row[3],
+                        'gold_amount': float(row[4]) if row[4] else 0,
+                        'rub_amount': float(row[5]) if row[5] else 0,
+                        'status': row[6] if len(row) > 6 else '',
+                        'admin_approved': row[7] if len(row) > 7 else 'Нет'
+                    }
+            return None
+        except Exception as e:
+            logger.error(f"Ошибка получения вывода: {e}")
+            return None
 
     # ========== МЕТОДЫ ДЛЯ ПРОФИЛЕЙ ==========
 
@@ -167,15 +267,15 @@ class GoogleSheetsManager:
         """Получение или создание профиля пользователя"""
         try:
             if not self.profiles:
-                logger.warning("⚠️ Таблица профилей не доступна")
+                logger.warning("⚠️ Лист профилей не доступен")
                 return self._create_test_profile(user_id, username, first_name, last_name)
 
             # Получаем все записи
             all_records = self.profiles.get_all_values()
 
-            # Ищем пользователя по всей таблице
+            # Ищем пользователя
             for i, row in enumerate(all_records):
-                if i == 0:  # Пропускаем заголовки
+                if i == 0:
                     continue
                 if len(row) > 0 and row[0] == str(user_id):
                     logger.info(f"✅ Найден существующий профиль для пользователя {user_id}")
@@ -243,7 +343,6 @@ class GoogleSheetsManager:
                 if i == 0:
                     continue
                 if len(row) > 0 and row[0] == str(user_id):
-                    # Нашли пользователя
                     current_balance = float(row[5]) if len(row) > 5 and row[5] else 0
 
                     if operation == 'add':
@@ -251,7 +350,7 @@ class GoogleSheetsManager:
                         # Обновляем статистику заказов
                         current_sum = float(row[6]) if len(row) > 6 and row[6] else 0
                         current_count = int(row[7]) if len(row) > 7 and row[7] else 0
-                        self.profiles.update_cell(i + 1, 7, str(current_sum + (amount * 0.75)))
+                        self.profiles.update_cell(i + 1, 7, str(current_sum + (amount * 0.75)))  # GOLD_RATE
                         self.profiles.update_cell(i + 1, 8, str(current_count + 1))
                     elif operation == 'subtract':
                         if current_balance < amount:
@@ -268,68 +367,52 @@ class GoogleSheetsManager:
             logger.error(f"Ошибка обновления баланса: {e}")
             return False
 
-    def update_order_status(self, sheet_type, order_number, status, admin_approved='Да'):
-        """Обновление статуса заказа"""
+    def get_user_purchases(self, user_id, limit=50, offset=0):
+        """Получение истории покупок"""
         try:
-            if sheet_type == 'purchase':
-                if not self.purchases:
-                    return False
-                sheet = self.purchases
-                cell = sheet.find(str(order_number))
-                if cell:
-                    sheet.update_cell(cell.row, 8, status)
-                    sheet.update_cell(cell.row, 10, admin_approved)
-                    return True
-            else:
-                if not self.withdrawals:
-                    return False
-                sheet = self.withdrawals
-                cell = sheet.find(str(order_number))
-                if cell:
-                    sheet.update_cell(cell.row, 7, status)
-                    sheet.update_cell(cell.row, 8, admin_approved)
-                    return True
-            return False
-        except Exception as e:
-            logger.error(f"Ошибка обновления статуса: {e}")
-            return False
+            if not self.purchases:
+                return []
 
-    def get_user_history(self, user_id, history_type):
-        """Получение истории пользователя"""
-        try:
             history = []
-
-            if history_type == 'purchases':
-                if not self.purchases:
-                    return []
-                records = self.purchases.get_all_values()[1:]
-                for row in records:
-                    if len(row) > 2 and row[2] == str(user_id):
-                        history.append({
-                            'order': row[0],
-                            'date': row[1],
-                            'gold': row[4],
-                            'rub': row[5],
-                            'status': row[7]
-                        })
-            else:
-                if not self.withdrawals:
-                    return []
-                records = self.withdrawals.get_all_values()[1:]
-                for row in records:
-                    if len(row) > 2 and row[2] == str(user_id):
-                        history.append({
-                            'order': row[0],
-                            'date': row[1],
-                            'gold': row[4],
-                            'rub': row[5],
-                            'status': row[6]
-                        })
+            records = self.purchases.get_all_values()[1:]
+            for row in records:
+                if len(row) > 2 and row[2] == str(user_id):
+                    history.append({
+                        'order_number': row[0],
+                        'date': row[1],
+                        'gold_amount': row[4],
+                        'rub_amount': row[5],
+                        'status': row[7]
+                    })
 
             history.sort(key=lambda x: x['date'], reverse=True)
-            return history
+            return history[offset:offset + limit]
         except Exception as e:
-            logger.error(f"Ошибка получения истории: {e}")
+            logger.error(f"Ошибка получения истории покупок: {e}")
+            return []
+
+    def get_user_withdrawals(self, user_id, limit=50, offset=0):
+        """Получение истории выводов"""
+        try:
+            if not self.withdrawals:
+                return []
+
+            history = []
+            records = self.withdrawals.get_all_values()[1:]
+            for row in records:
+                if len(row) > 2 and row[2] == str(user_id):
+                    history.append({
+                        'order_number': row[0],
+                        'date': row[1],
+                        'gold_amount': row[4],
+                        'rub_amount': row[5],
+                        'status': row[6]
+                    })
+
+            history.sort(key=lambda x: x['date'], reverse=True)
+            return history[offset:offset + limit]
+        except Exception as e:
+            logger.error(f"Ошибка получения истории выводов: {e}")
             return []
 
     def _create_test_profile(self, user_id, username, first_name, last_name):
@@ -345,52 +428,3 @@ class GoogleSheetsManager:
             'total_orders_count': 0,
             'status': 'Активен'
         }
-
-    # ========== МЕТОД ДЛЯ ОЧИСТКИ ДУБЛИКАТОВ ==========
-
-    def clean_duplicate_profiles(self):
-        """Очистка дубликатов профилей (запустить один раз)"""
-        try:
-            if not self.profiles:
-                return
-
-            all_records = self.profiles.get_all_values()
-            if len(all_records) <= 1:
-                return
-
-            headers = all_records[0]
-            unique_users = {}
-
-            # Собираем уникальные записи
-            for row in all_records[1:]:
-                if len(row) < 1:
-                    continue
-
-                user_id = row[0]
-
-                # Если такой пользователь уже есть, сравниваем баланс
-                if user_id in unique_users:
-                    existing = unique_users[user_id]
-                    try:
-                        existing_balance = float(existing[5]) if len(existing) > 5 and existing[5] else 0
-                        new_balance = float(row[5]) if len(row) > 5 and row[5] else 0
-                        # Оставляем запись с большим балансом
-                        if new_balance > existing_balance:
-                            unique_users[user_id] = row
-                    except:
-                        pass
-                else:
-                    unique_users[user_id] = row
-
-            # Очищаем и записываем заново
-            self.profiles.clear()
-            self.profiles.append_row(headers)
-            for profile in unique_users.values():
-                self.profiles.append_row(profile)
-
-            logger.info(f"✅ Очищено дубликатов. Осталось {len(unique_users)} уникальных профилей")
-            return True
-
-        except Exception as e:
-            logger.error(f"Ошибка очистки дубликатов: {e}")
-            return False

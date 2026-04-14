@@ -11,16 +11,41 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(messa
 logger = logging.getLogger(__name__)
 
 from config import *
-from database import Database
+from google_sheets import GoogleSheetsManager
 
 # Инициализация бота
 bot = telebot.TeleBot(BOT_TOKEN)
-bot.remove_webhook()
 
-# Инициализация базы данных
-db = Database()
+# Пропускаем ошибку удаления вебхука
+try:
+    bot.remove_webhook()
+except Exception as e:
+    logger.warning(f"⚠️ Пропускаем ошибку вебхука: {e}")
+
+# Инициализация Google Sheets (ОДНА таблица, три листа)
+db = GoogleSheetsManager(
+    GOOGLE_SHEET_ID,      # ID таблицы
+    SHEET_PROFILES,       # Лист "Профили"
+    SHEET_PURCHASES,      # Лист "Покупки"
+    SHEET_WITHDRAWALS     # Лист "Выводы"
+)
+
+# Хранение временных данных
+user_data = {}
+pending_orders = {}
+get_id_mode = {}
+
+# Константы
+MIN_PURCHASE = 100
+MAX_PURCHASE = 10000
+WITHDRAWAL_COMMISSION = 0.20
+FIXED_FEE = 0.04
 
 ADMIN_IDS = [8214136791, 1441402891]
+
+@bot.message_handler(commands=['chatid'])
+def chatid(message):
+    bot.reply_to(message, f"chat.id = {message.chat.id}")
 
 @bot.message_handler(commands=['get_db'])
 def get_db_file(message):
@@ -46,17 +71,6 @@ def get_db_file(message):
         # ЭТО БУДЕТ ПИСАТЬ ВСЕМ ОСТАЛЬНЫМ
         bot.reply_to(message, "⛔ Эта функция доступна только админам.")
 
-
-# Хранение временных данных
-user_data = {}
-pending_orders = {}
-get_id_mode = {}  # Для режима получения file_id
-
-# Константы
-MIN_PURCHASE = 100
-MAX_PURCHASE = 10000
-WITHDRAWAL_COMMISSION = 0.20  # 20%
-FIXED_FEE = 0.04  # 0.04 GOLD
 
 
 # ================== КЛАСС ДЛЯ УПРАВЛЕНИЯ FILE_ID ==================
